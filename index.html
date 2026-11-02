@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>교안 요약 & 퀴즈 생성기</title>
+    <!-- pdf.js 라이브러리 불러오기 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+        .box { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        button { cursor: pointer; padding: 8px 16px; margin-top: 10px; }
+        #result { whitespace: pre-wrap; background: #f9f9f9; padding: 15px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+
+    <h2>📚 교안 PDF 요약 & 퀴즈 생성 웹앱</h2>
+
+    <!-- 1. API 키 입력 영역 -->
+    <div class="box">
+        <h3>1. Gemini API 키 설정</h3>
+        <input type="password" id="apiKeyInput" placeholder="API Key를 입력하세요" style="width: 300px; padding: 6px;">
+        <button onclick="saveApiKey()">API 키 저장</button>
+        <p id="keyStatus" style="color: green; font-size: 0.9em;"></p>
+    </div>
+
+    <!-- 2. PDF 파일 업로드 영역 -->
+    <div class="box">
+        <h3>2. 교안 PDF 업로드</h3>
+        <input type="file" id="pdfInput" accept="application/pdf">
+        <br>
+        <button onclick="processPdf()">요약 및 문제 생성하기</button>
+    </div>
+
+    <!-- 3. 결과 출력 영역 -->
+    <div class="box">
+        <h3>3. 결과</h3>
+        <div id="result">여기에 요약 내용과 10문제가 출력됩니다.</div>
+    </div>
+
+    <script>
+        // 페이지 로드 시 기존 저장된 API 키 불러오기
+        window.onload = function() {
+            const savedKey = localStorage.getItem('gemini_api_key');
+            if (savedKey) {
+                document.getElementById('apiKeyInput').value = savedKey;
+                document.getElementById('keyStatus').innerText = "저장된 API 키가 불러와졌습니다.";
+            }
+        };
+
+        // API 키 LocalStorage에 저장
+        function saveApiKey() {
+            const key = document.getElementById('apiKeyInput').value;
+            if (!key) {
+                alert('API 키를 입력하세요.');
+                return;
+            }
+            localStorage.setItem('gemini_api_key', key);
+            document.getElementById('keyStatus').innerText = "API 키가 성공적으로 저장되었습니다!";
+        }
+
+        // PDF 텍스트 추출 및 Gemini API 호출
+        async function processPdf() {
+            const apiKey = localStorage.getItem('gemini_api_key');
+            if (!apiKey) {
+                alert('먼저 API 키를 입력하고 저장해주세요.');
+                return;
+            }
+
+            const fileInput = document.getElementById('pdfInput');
+            if (fileInput.files.length === 0) {
+                alert('PDF 파일을 선택해주세요.');
+                return;
+            }
+
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerText = "PDF 파일에서 텍스트를 읽고 제미나이가 요약/문제를 생성 중입니다... 잠시만 기다려주세요.";
+
+            try {
+                const file = fileInput.files[0];
+                const arrayBuffer = await file.arrayBuffer();
+                
+                // pdf.js 설정
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                
+                let extractedText = "";
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map(item => item.str).join(" ");
+                    extractedText += pageText + "\n";
+                }
+
+                // Gemini API 호출
+                const prompt = `다음 교안 내용을 바탕으로 아래 작업을 수행해줘.\n1. 핵심 내용을 깔끔하게 요약해줘.\n2. 내용을 바탕으로 4지선다형 객관식 문제 10개를 만들고 정답과 해설도 포함해줘.\n\n[교안 내용]\n${extractedText}`;
+
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }]
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.candidates && data.candidates[0].content.parts[0].text) {
+                    resultDiv.innerText = data.candidates[0].content.parts[0].text;
+                } else {
+                    resultDiv.innerText = "오류가 발생했습니다. API 키나 파일 상태를 확인해주세요.";
+                }
+
+            } catch (error) {
+                console.error(error);
+                resultDiv.innerText = "처리 중 에러가 발생했습니다: " + error.message;
+            }
+        }
+    </script>
+</body>
+</html>
